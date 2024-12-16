@@ -1,0 +1,130 @@
+package main
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"fmt"
+	"io/ioutil"
+	"math/big"
+)
+
+func generateKeys(bitSize int, e *big.Int) (d, n *big.Int, err error) { //2022220036 赵麟
+	// 随机生成两个大素数
+	p, err := rand.Prime(rand.Reader, bitSize/2)
+	if err != nil {
+		return nil, nil, err
+	}
+	q, err := rand.Prime(rand.Reader, bitSize/2)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// 计算 n
+	n = new(big.Int).Mul(p, q)
+
+	// 计算 φ(n)
+	phi := new(big.Int).Mul(
+		new(big.Int).Sub(p, big.NewInt(1)),
+		new(big.Int).Sub(q, big.NewInt(1)),
+	)
+
+	// 确保 e 与 φ(n) 互质
+	gcd := new(big.Int).GCD(nil, nil, e, phi)
+	if gcd.Cmp(big.NewInt(1)) != 0 {
+		return nil, nil, fmt.Errorf("e 与 φ(n) 不互质")
+	}
+
+	// 计算 d，使得 d * e ≡ 1 mod φ(n)
+	d = new(big.Int).ModInverse(e, phi)
+	if d == nil {
+		return nil, nil, fmt.Errorf("无法计算 d 的逆元")
+	}
+
+	return d, n, nil
+}
+
+// RSA 签名函数：signature = hash^d mod n
+func rsaSign(hashInt, d, n *big.Int) *big.Int {
+	signature := new(big.Int).Exp(hashInt, d, n)
+	return signature
+}
+
+// RSA 验证函数：hash = signature^e mod n
+func rsaVerify(signature, e, n *big.Int) *big.Int {
+	hashInt := new(big.Int).Exp(signature, e, n)
+	return hashInt
+}
+
+func main() {
+	// 设置密钥参数
+	bitSize := 2048        // 密钥位数，实际应用中至少应为 2048 位
+	e := big.NewInt(65537) // 公钥指数，常用值为 3、17、65537
+
+	// 生成 RSA 密钥对
+	d, n, err := generateKeys(bitSize, e)
+	if err != nil {
+		fmt.Println("密钥生成失败：", err)
+		return
+	}
+
+	// 输出密钥对（为简洁，不打印私钥和 n）
+	fmt.Println("公钥 (e, n)：")
+	fmt.Println("e =", e)
+	// fmt.Println("n =", n) // n 可能非常大，打印会影响阅读
+
+	// 读取 plain.txt 文件内容
+	messageBytes, err := ioutil.ReadFile("plain.txt")
+	if err != nil {
+		fmt.Println("读取文件失败：", err)
+		return
+	}
+	fmt.Println("\n原始消息：")
+	fmt.Println(string(messageBytes))
+
+	// 对消息进行哈希处理（使用 SHA-256）
+	hash := sha256.Sum256(messageBytes)
+	hashInt := new(big.Int).SetBytes(hash[:])
+
+	// 检查哈希值是否小于模数 n
+	if hashInt.Cmp(n) >= 0 {
+		fmt.Println("错误：哈希值过大，无法签名。")
+		return
+	}
+
+	// 生成数字签名
+	signature := rsaSign(hashInt, d, n)
+	fmt.Println("\n数字签名（大整数表示）：")
+	// fmt.Println(signature) // 签名可能非常大，打印会影响阅读
+
+	// 将签名保存到文件
+	err = ioutil.WriteFile("signature.txt", signature.Bytes(), 0644)
+	if err != nil {
+		fmt.Println("保存签名失败：", err)
+		return
+	}
+	fmt.Println("签名已保存到 signature.txt 文件。")
+
+	// 模拟接收者验证签名
+	// 接收者读取消息和签名
+	receivedMessage := messageBytes
+	receivedSignatureBytes, err := ioutil.ReadFile("signature.txt")
+	if err != nil {
+		fmt.Println("读取签名失败：", err)
+		return
+	}
+	receivedSignature := new(big.Int).SetBytes(receivedSignatureBytes)
+
+	// 接收者对消息进行哈希处理
+	receivedHash := sha256.Sum256(receivedMessage)
+	receivedHashInt := new(big.Int).SetBytes(receivedHash[:])
+
+	// 使用公钥验证签名
+	verifiedHashInt := rsaVerify(receivedSignature, e, n)
+
+	// 比较哈希值
+	if receivedHashInt.Cmp(verifiedHashInt) == 0 {
+		fmt.Println("\n签名验证成功，消息未被篡改。")
+	} else {
+		fmt.Println("\n签名验证失败，消息可能被篡改。")
+	}
+}
